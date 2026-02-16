@@ -1,0 +1,21 @@
+# IDE files
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Gemini CLI temp directory
+.gemini/
+
+.env
+.env.local
+.env.production
+.env.development
+
+node_modules/
+dist/
+build/
+logs/
+*.log

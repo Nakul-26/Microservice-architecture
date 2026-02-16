@@ -1,0 +1,30 @@
+{
+  "name": "api_gateway",
+  "version": "1.0.0",
+  "description": "Simple API gateway for user and notes services",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "nodemon --exec \"node --loader ts-node/esm\" src/index.ts",
+    "dev": "nodemon --exec \"node --loader ts-node/esm\" src/index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "http-proxy-middleware": "^3.0.5",
+    "jsonwebtoken": "^9.0.3"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^25.1.0",
+    "nodemon": "^3.1.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
