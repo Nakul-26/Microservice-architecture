@@ -52,7 +52,23 @@ app.use((req, res, next) => {
   const token = authHeader.slice('Bearer '.length);
 
   try {
-    jwt.verify(token, jwtSecret);
+    const decoded = jwt.verify(token, jwtSecret);
+    if (typeof decoded === 'string') {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const userId = typeof decoded.sub === 'string' ? decoded.sub : '';
+    const userEmail = typeof decoded.email === 'string' ? decoded.email : '';
+    const userRole = decoded.role === 'admin' ? 'admin' : 'user';
+
+    if (!userId) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    req.headers['x-user-id'] = userId;
+    req.headers['x-user-email'] = userEmail;
+    req.headers['x-user-role'] = userRole;
+
     next();
   } catch {
     return res.status(401).json({ message: 'Unauthorized' });
@@ -82,7 +98,16 @@ app.use(
     changeOrigin: true,
     pathRewrite: (path) => `/users${path}`,
     on: {
-      proxyReq: fixRequestBody,
+      proxyReq: (proxyReq, req, res) => {
+        fixRequestBody(proxyReq, req);
+        const userId = req.headers['x-user-id'];
+        const userEmail = req.headers['x-user-email'];
+        const userRole = req.headers['x-user-role'];
+
+        if (typeof userId === 'string') proxyReq.setHeader('x-user-id', userId);
+        if (typeof userEmail === 'string') proxyReq.setHeader('x-user-email', userEmail);
+        if (typeof userRole === 'string') proxyReq.setHeader('x-user-role', userRole);
+      },
     },
   })
 );
@@ -94,7 +119,16 @@ app.use(
     changeOrigin: true,
     pathRewrite: (path) => `/notes${path}`,
     on: {
-      proxyReq: fixRequestBody,
+      proxyReq: (proxyReq, req, res) => {
+        fixRequestBody(proxyReq, req);
+        const userId = req.headers['x-user-id'];
+        const userEmail = req.headers['x-user-email'];
+        const userRole = req.headers['x-user-role'];
+
+        if (typeof userId === 'string') proxyReq.setHeader('x-user-id', userId);
+        if (typeof userEmail === 'string') proxyReq.setHeader('x-user-email', userEmail);
+        if (typeof userRole === 'string') proxyReq.setHeader('x-user-role', userRole);
+      },
     },
   })
 );

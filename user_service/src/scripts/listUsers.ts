@@ -33,6 +33,7 @@ const run = async () => {
       id: user._id?.toString(),
       name: user.name ?? '',
       email: user.email ?? '',
+      role: user.role === 'admin' ? 'admin' : 'user',
       createdAt: user.createdAt ? new Date(user.createdAt).toISOString() : '',
       updatedAt: user.updatedAt ? new Date(user.updatedAt).toISOString() : '',
     }));

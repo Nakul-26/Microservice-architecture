@@ -23,17 +23,19 @@ const parseArgs = () => {
     name: getArg('name').trim(),
     email: getArg('email').trim().toLowerCase(),
     password: getArg('password'),
+    role: getArg('role').trim().toLowerCase(),
   };
 };
 
 const client = new MongoClient(mongoUri);
 
 const run = async () => {
-  const { name, email, password } = parseArgs();
+  const { name, email, password, role } = parseArgs();
+  const normalizedRole = role === 'admin' ? 'admin' : 'user';
 
   if (!name || !email || !password) {
     console.error(
-      'Usage: npm run users:create -- --name "Jane Doe" --email "jane@example.com" --password "secret"'
+      'Usage: npm run users:create -- --name "Jane Doe" --email "jane@example.com" --password "secret" [--role "admin|user"]'
     );
     process.exit(1);
   }
@@ -54,6 +56,7 @@ const run = async () => {
       name,
       email,
       password,
+      role: normalizedRole,
       createdAt: new Date(),
     });
 

@@ -1,12 +1,32 @@
 import express from 'express';
 import { ObjectId } from 'mongodb';
 import type { Db } from 'mongodb';
-import * as jwt from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret-change-me';
+type UserRole = 'admin' | 'user';
+
+const getRequester = (req: express.Request) => {
+  const requesterId = typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'] : '';
+  const requesterRole = req.headers['x-user-role'] === 'admin' ? 'admin' : 'user';
+  return { requesterId, requesterRole: requesterRole as UserRole };
+};
+
+const requireAdmin = (req: express.Request, res: express.Response) => {
+  const { requesterRole } = getRequester(req);
+  if (requesterRole !== 'admin') {
+    res.status(403).json({ message: 'Forbidden: admin access required' });
+    return false;
+  }
+  return true;
+};
 
 router.get('/', async (req, res) => {
+  if (!requireAdmin(req, res)) {
+    return;
+  }
+
   try {
     const db = req.app.locals.db as Db | undefined;
     if (!db) {
@@ -22,6 +42,7 @@ router.get('/', async (req, res) => {
     const formatted = results.map((user) => ({
       ...user,
       _id: user._id.toString(),
+      role: user.role === 'admin' ? 'admin' : 'user',
     }));
 
     res.json(formatted);
@@ -31,7 +52,14 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/register', async (req, res) => {
-  const { name, email, password } = req.body;
+  if (!requireAdmin(req, res)) {
+    return;
+  }
+
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const role = req.body?.role === 'admin' ? 'admin' : 'user';
 
   if (!name || !email || !password) {
     return res.status(400).json({ message: 'All fields are required' });
@@ -53,6 +81,7 @@ router.post('/register', async (req, res) => {
       name,
       email,
       password,
+      role,
       createdAt: new Date(),
     });
 
@@ -63,7 +92,8 @@ router.post('/register', async (req, res) => {
 });
 
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password are required' });
@@ -82,11 +112,21 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    let userRole: UserRole = user.role === 'admin' ? 'admin' : 'user';
+    if (!user.role) {
+      const adminCount = await users.countDocuments({ role: 'admin' });
+      if (adminCount === 0) {
+        await users.updateOne({ _id: user._id }, { $set: { role: 'admin', updatedAt: new Date() } });
+        userRole = 'admin';
+      }
+    }
+
     const token = jwt.sign(
       {
         sub: user._id.toString(),
         email: user.email,
         name: user.name,
+        role: userRole,
       },
       jwtSecret
     );
@@ -97,6 +137,7 @@ router.post('/login', async (req, res) => {
         _id: user._id.toString(),
         name: user.name,
         email: user.email,
+        role: userRole,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
@@ -107,15 +148,21 @@ router.post('/login', async (req, res) => {
 });
 
 router.patch('/:id', async (req, res) => {
+  if (!requireAdmin(req, res)) {
+    return;
+  }
+
   const { id } = req.params;
-  const { name, email } = req.body;
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const role = req.body?.role === 'admin' ? 'admin' : req.body?.role === 'user' ? 'user' : undefined;
 
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ message: 'Invalid user id' });
   }
 
-  if (!name && !email) {
-    return res.status(400).json({ message: 'Provide name or email to update' });
+  if (!name && !email && !role) {
+    return res.status(400).json({ message: 'Provide name, email, or role to update' });
   }
 
   try {
@@ -149,6 +196,10 @@ router.patch('/:id', async (req, res) => {
       update.email = email;
     }
 
+    if (role) {
+      update.role = role;
+    }
+
     const result = await users.updateOne(
       { _id: new ObjectId(id) },
       { $set: update }
@@ -165,6 +216,10 @@ router.patch('/:id', async (req, res) => {
 });
 
 router.delete('/:id', async (req, res) => {
+  if (!requireAdmin(req, res)) {
+    return;
+  }
+
   const { id } = req.params;
 
   if (!ObjectId.isValid(id)) {

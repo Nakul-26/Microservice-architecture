@@ -105,6 +105,22 @@ h1 {
   gap: 8px;
 }
 
+.password-input-wrap {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.password-input-wrap input {
+  flex: 1;
+}
+
+.password-toggle {
+  border-radius: 12px;
+  padding: 10px 14px;
+  min-width: 72px;
+}
+
 label {
   font-weight: 600;
   color: #2f2a24;

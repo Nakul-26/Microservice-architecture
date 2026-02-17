@@ -5,6 +5,7 @@ type User = {
   _id: string
   name: string
   email: string
+  role?: 'admin' | 'user'
   createdAt?: string
   updatedAt?: string
 }
@@ -27,6 +28,7 @@ function App() {
 
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
+  const [showLoginPassword, setShowLoginPassword] = useState(false)
   const [loginStatus, setLoginStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [loginMessage, setLoginMessage] = useState('')
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null)
@@ -65,6 +67,7 @@ function App() {
   const [editNoteContent, setEditNoteContent] = useState('')
   const [editNoteStatus, setEditNoteStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [editNoteMessage, setEditNoteMessage] = useState('')
+  const isAdmin = loggedInUser?.role === 'admin'
 
   const handleUnauthorized = () => {
     setAuthToken(null)
@@ -152,7 +155,7 @@ function App() {
       const storedUser = JSON.parse(storedUserRaw) as User
       setAuthToken(storedToken)
       setLoggedInUser(storedUser)
-      setView('users')
+      setView(storedUser.role === 'admin' ? 'users' : 'notes')
     } catch {
       localStorage.removeItem(AUTH_TOKEN_KEY)
       localStorage.removeItem(AUTH_USER_KEY)
@@ -175,11 +178,20 @@ function App() {
       return
     }
 
-    void fetchUsers()
+    if (isAdmin) {
+      void fetchUsers()
+    } else {
+      setUsers([])
+    }
     void fetchNotes()
-  }, [authToken])
+  }, [authToken, isAdmin])
 
   useEffect(() => {
+    if (!isAdmin && loggedInUser) {
+      setCreateNoteUserId(loggedInUser._id)
+      return
+    }
+
     if (loggedInUser && users.some((user) => user._id === loggedInUser._id)) {
       setCreateNoteUserId(loggedInUser._id)
       return
@@ -188,7 +200,13 @@ function App() {
     if (users.length > 0 && !createNoteUserId) {
       setCreateNoteUserId(users[0]._id)
     }
-  }, [users, loggedInUser, createNoteUserId])
+  }, [users, loggedInUser, createNoteUserId, isAdmin])
+
+  useEffect(() => {
+    if (loggedInUser && !isAdmin && view === 'users') {
+      setView('notes')
+    }
+  }, [loggedInUser, isAdmin, view])
 
   const userNameById = useMemo(() => {
     return new Map(users.map((user) => [user._id, user.name]))
@@ -316,6 +334,14 @@ function App() {
     setCreateNoteMessage('')
 
     if (!createNoteUserId) {
+      if (!isAdmin) {
+        setCreateNoteUserId(loggedInUser?._id ?? '')
+      }
+    }
+
+    const ownerId = isAdmin ? createNoteUserId : (loggedInUser?._id ?? '')
+
+    if (!ownerId) {
       setCreateNoteStatus('error')
       setCreateNoteMessage('Select a user for this note.')
       return
@@ -326,7 +352,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: createNoteUserId,
+          userId: ownerId,
           title: createNoteTitle,
           content: createNoteContent,
         }),
@@ -439,9 +465,10 @@ function App() {
       setLoginMessage(`Welcome back, ${name}.`)
       setAuthToken(token)
       setLoggedInUser(user)
-      setView('users')
+      setView(user.role === 'admin' ? 'users' : 'notes')
       setLoginEmail('')
       setLoginPassword('')
+      setShowLoginPassword(false)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unexpected error'
       setLoginStatus('error')
@@ -455,6 +482,7 @@ function App() {
     setView('login')
     setLoginStatus('idle')
     setLoginMessage('You have been logged out.')
+    setShowLoginPassword(false)
     setUsers([])
     setNotes([])
   }
@@ -492,7 +520,8 @@ function App() {
           <button
             className={view === 'users' ? 'primary' : 'ghost'}
             type="button"
-            onClick={() => (loggedInUser ? setView('users') : requireLogin())}
+            onClick={() => (loggedInUser && isAdmin ? setView('users') : requireLogin())}
+            disabled={loggedInUser ? !isAdmin : false}
           >
             Users
           </button>
@@ -540,15 +569,25 @@ function App() {
               </div>
               <div className="field">
                 <label htmlFor="login-password">Password</label>
-                <input
-                  id="login-password"
-                  name="login-password"
-                  type="password"
-                  placeholder="Enter your password"
-                  value={loginPassword}
-                  onChange={(event) => setLoginPassword(event.target.value)}
-                  required
-                />
+                <div className="password-input-wrap">
+                  <input
+                    id="login-password"
+                    name="login-password"
+                    type={showLoginPassword ? 'text' : 'password'}
+                    placeholder="Enter your password"
+                    value={loginPassword}
+                    onChange={(event) => setLoginPassword(event.target.value)}
+                    required
+                  />
+                  <button
+                    className="ghost password-toggle"
+                    type="button"
+                    onClick={() => setShowLoginPassword((current) => !current)}
+                    aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showLoginPassword ? 'Hide' : 'Show'}
+                  </button>
+                </div>
               </div>
               <div className="actions">
                 <button className="primary" type="submit" disabled={loginStatus === 'loading'}>
@@ -560,7 +599,7 @@ function App() {
           </section>
         ) : null}
 
-        {loggedInUser && view === 'users' ? (
+        {loggedInUser && isAdmin && view === 'users' ? (
           <>
             <section className="panel">
               <div className="panel-header">
@@ -715,22 +754,26 @@ function App() {
               <form className="form-grid" onSubmit={handleCreateNote}>
                 <div className="field">
                   <label htmlFor="create-note-user">Owner</label>
-                  <select
-                    id="create-note-user"
-                    name="create-note-user"
-                    value={createNoteUserId}
-                    onChange={(event) => setCreateNoteUserId(event.target.value)}
-                    required
-                  >
-                    <option value="" disabled>
-                      Select a user
-                    </option>
-                    {users.map((user) => (
-                      <option key={user._id} value={user._id}>
-                        {user.name} ({user.email})
+                  {isAdmin ? (
+                    <select
+                      id="create-note-user"
+                      name="create-note-user"
+                      value={createNoteUserId}
+                      onChange={(event) => setCreateNoteUserId(event.target.value)}
+                      required
+                    >
+                      <option value="" disabled>
+                        Select a user
                       </option>
-                    ))}
-                  </select>
+                      {users.map((user) => (
+                        <option key={user._id} value={user._id}>
+                          {user.name} ({user.email})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input type="text" value={loggedInUser?.name ?? 'You'} disabled />
+                  )}
                 </div>
                 <div className="field">
                   <label htmlFor="create-note-title">Title</label>
@@ -760,7 +803,7 @@ function App() {
                   <button
                     className="primary"
                     type="submit"
-                    disabled={createNoteStatus === 'loading' || users.length === 0}
+                    disabled={createNoteStatus === 'loading' || (isAdmin && users.length === 0)}
                   >
                     {createNoteStatus === 'loading' ? 'Creating...' : 'Add Note'}
                   </button>
