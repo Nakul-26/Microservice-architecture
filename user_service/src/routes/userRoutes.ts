@@ -6,15 +6,54 @@ import jwt from 'jsonwebtoken';
 const router = express.Router();
 const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret-change-me';
 type UserRole = 'admin' | 'user';
+type Requester = { requesterId: string; requesterRole: UserRole };
 
-const getRequester = (req: express.Request) => {
-  const requesterId = typeof req.headers['x-user-id'] === 'string' ? req.headers['x-user-id'] : '';
-  const requesterRole = req.headers['x-user-role'] === 'admin' ? 'admin' : 'user';
-  return { requesterId, requesterRole: requesterRole as UserRole };
+const buildUserIdQuery = (id: string) => ({
+  $or: [{ _id: id }, { _id: new ObjectId(id) }],
+});
+
+const getRequester = (req: express.Request): Requester | null => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
+  }
+
+  const token = authHeader.slice('Bearer '.length);
+
+  try {
+    const decoded = jwt.verify(token, jwtSecret);
+    if (typeof decoded === 'string') {
+      return null;
+    }
+
+    const requesterId = typeof decoded.sub === 'string' ? decoded.sub : '';
+    if (!requesterId) {
+      return null;
+    }
+
+    const requesterRole: UserRole = decoded.role === 'admin' ? 'admin' : 'user';
+    return { requesterId, requesterRole };
+  } catch {
+    return null;
+  }
+};
+
+const requireAuth = (req: express.Request, res: express.Response) => {
+  const requester = getRequester(req);
+  if (!requester) {
+    res.status(401).json({ message: 'Unauthorized' });
+    return null;
+  }
+  return requester;
 };
 
 const requireAdmin = (req: express.Request, res: express.Response) => {
-  const { requesterRole } = getRequester(req);
+  const requester = requireAuth(req, res);
+  if (!requester) {
+    return false;
+  }
+
+  const { requesterRole } = requester;
   if (requesterRole !== 'admin') {
     res.status(403).json({ message: 'Forbidden: admin access required' });
     return false;
@@ -112,14 +151,7 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    let userRole: UserRole = user.role === 'admin' ? 'admin' : 'user';
-    if (!user.role) {
-      const adminCount = await users.countDocuments({ role: 'admin' });
-      if (adminCount === 0) {
-        await users.updateOne({ _id: user._id }, { $set: { role: 'admin', updatedAt: new Date() } });
-        userRole = 'admin';
-      }
-    }
+    const userRole: UserRole = user.role === 'admin' ? 'admin' : 'user';
 
     const token = jwt.sign(
       {
@@ -174,13 +206,13 @@ router.patch('/:id', async (req, res) => {
     const users = db.collection('users');
 
     if (email) {
-      const existingUser = await users.findOne({
-        email,
-        _id: { $ne: new ObjectId(id) },
-      });
+      const existingUser = await users.findOne({ email });
 
       if (existingUser) {
-        return res.status(409).json({ message: 'Email already registered' });
+        const existingId = existingUser._id?.toString?.() ?? '';
+        if (existingId !== id) {
+          return res.status(409).json({ message: 'Email already registered' });
+        }
       }
     }
 
@@ -201,7 +233,7 @@ router.patch('/:id', async (req, res) => {
     }
 
     const result = await users.updateOne(
-      { _id: new ObjectId(id) },
+      buildUserIdQuery(id),
       { $set: update }
     );
 
@@ -233,7 +265,7 @@ router.delete('/:id', async (req, res) => {
     }
 
     const users = db.collection('users');
-    const result = await users.deleteOne({ _id: new ObjectId(id) });
+    const result = await users.deleteOne(buildUserIdQuery(id));
 
     if (result.deletedCount === 0) {
       return res.status(404).json({ message: 'User not found' });

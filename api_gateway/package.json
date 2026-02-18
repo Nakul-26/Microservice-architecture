@@ -4,8 +4,9 @@
   "description": "Simple API gateway for user and notes services",
   "main": "src/index.ts",
   "scripts": {
-    "start": "nodemon --exec \"node --loader ts-node/esm\" src/index.ts",
-    "dev": "nodemon --exec \"node --loader ts-node/esm\" src/index.ts"
+    "start": "node --loader ts-node/esm src/index.ts",
+    "dev": "node --loader ts-node/esm src/index.ts",
+    "dev:nodemon": "nodemon --exec \"node --loader ts-node/esm\" src/index.ts"
   },
   "keywords": [],
   "author": "",

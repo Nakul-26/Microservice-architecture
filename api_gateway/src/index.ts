@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
+import { createProxyMiddleware } from 'http-proxy-middleware';
 import jwt from 'jsonwebtoken';
 
 dotenv.config();
@@ -13,7 +13,6 @@ const notesServiceUrl = process.env.NOTES_SERVICE_URL ?? 'http://localhost:3002'
 const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret-change-me';
 
 app.use(cors());
-app.use(express.json());
 app.use((req, res, next) => {
   const startedAt = Date.now();
 
@@ -91,47 +90,17 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.use(
-  '/users',
-  createProxyMiddleware({
-    target: userServiceUrl,
-    changeOrigin: true,
-    pathRewrite: (path) => `/users${path}`,
-    on: {
-      proxyReq: (proxyReq, req, res) => {
-        fixRequestBody(proxyReq, req);
-        const userId = req.headers['x-user-id'];
-        const userEmail = req.headers['x-user-email'];
-        const userRole = req.headers['x-user-role'];
+app.use('/users', createProxyMiddleware({
+  target: userServiceUrl,
+  changeOrigin: true,
+  pathRewrite: (path) => `/users${path}`,
+}));
 
-        if (typeof userId === 'string') proxyReq.setHeader('x-user-id', userId);
-        if (typeof userEmail === 'string') proxyReq.setHeader('x-user-email', userEmail);
-        if (typeof userRole === 'string') proxyReq.setHeader('x-user-role', userRole);
-      },
-    },
-  })
-);
-
-app.use(
-  '/notes',
-  createProxyMiddleware({
-    target: notesServiceUrl,
-    changeOrigin: true,
-    pathRewrite: (path) => `/notes${path}`,
-    on: {
-      proxyReq: (proxyReq, req, res) => {
-        fixRequestBody(proxyReq, req);
-        const userId = req.headers['x-user-id'];
-        const userEmail = req.headers['x-user-email'];
-        const userRole = req.headers['x-user-role'];
-
-        if (typeof userId === 'string') proxyReq.setHeader('x-user-id', userId);
-        if (typeof userEmail === 'string') proxyReq.setHeader('x-user-email', userEmail);
-        if (typeof userRole === 'string') proxyReq.setHeader('x-user-role', userRole);
-      },
-    },
-  })
-);
+app.use('/notes', createProxyMiddleware({
+  target: notesServiceUrl,
+  changeOrigin: true,
+  pathRewrite: (path) => `/notes${path}`,
+}));
 
 app.listen(port, () => {
   console.log(`API gateway listening at http://localhost:${port}`);
