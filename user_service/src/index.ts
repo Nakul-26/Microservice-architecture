@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { MongoClient } from 'mongodb';
-import userRoutes from './routes/userRoutes.ts';
+import userRoutes from './routes/userRoutes.js';
 
 dotenv.config();
 

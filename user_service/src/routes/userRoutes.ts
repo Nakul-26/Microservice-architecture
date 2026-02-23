@@ -1,45 +1,20 @@
 import express from 'express';
 import { ObjectId } from 'mongodb';
 import type { Db } from 'mongodb';
-import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
+import {
+  getRequesterFromAuthorizationHeader,
+  signUserToken,
+} from '../auth/jwt.js';
 
 const router = express.Router();
-const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret-change-me';
-type UserRole = 'admin' | 'user';
-type Requester = { requesterId: string; requesterRole: UserRole };
+const parsedBcryptSaltRounds = Number.parseInt(process.env.BCRYPT_SALT_ROUNDS ?? '10', 10);
+const bcryptSaltRounds = Number.isFinite(parsedBcryptSaltRounds) ? parsedBcryptSaltRounds : 10;
 
-const buildUserIdQuery = (id: string) => ({
-  $or: [{ _id: id }, { _id: new ObjectId(id) }],
-});
-
-const getRequester = (req: express.Request): Requester | null => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null;
-  }
-
-  const token = authHeader.slice('Bearer '.length);
-
-  try {
-    const decoded = jwt.verify(token, jwtSecret);
-    if (typeof decoded === 'string') {
-      return null;
-    }
-
-    const requesterId = typeof decoded.sub === 'string' ? decoded.sub : '';
-    if (!requesterId) {
-      return null;
-    }
-
-    const requesterRole: UserRole = decoded.role === 'admin' ? 'admin' : 'user';
-    return { requesterId, requesterRole };
-  } catch {
-    return null;
-  }
-};
+const buildUserIdQuery = (id: string) => ({ _id: new ObjectId(id) });
 
 const requireAuth = (req: express.Request, res: express.Response) => {
-  const requester = getRequester(req);
+  const requester = getRequesterFromAuthorizationHeader(req.headers.authorization);
   if (!requester) {
     res.status(401).json({ message: 'Unauthorized' });
     return null;
@@ -116,10 +91,12 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ message: 'Email already registered' });
     }
 
+    const hashedPassword = await bcrypt.hash(password, bcryptSaltRounds);
+
     const result = await users.insertOne({
       name,
       email,
-      password,
+      password: hashedPassword,
       role,
       createdAt: new Date(),
     });
@@ -147,21 +124,23 @@ router.post('/login', async (req, res) => {
     const users = db.collection('users');
     const user = await users.findOne({ email });
 
-    if (!user || user.password !== password) {
+    const storedPassword = typeof user?.password === 'string' ? user.password : '';
+    const passwordMatches = storedPassword
+      ? await bcrypt.compare(password, storedPassword)
+      : false;
+
+    if (!user || !passwordMatches) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    const userRole: UserRole = user.role === 'admin' ? 'admin' : 'user';
+    const userRole = user.role === 'admin' ? 'admin' : 'user';
 
-    const token = jwt.sign(
-      {
-        sub: user._id.toString(),
-        email: user.email,
-        name: user.name,
-        role: userRole,
-      },
-      jwtSecret
-    );
+    const token = signUserToken({
+      sub: user._id.toString(),
+      email: user.email,
+      name: user.name,
+      role: userRole,
+    });
 
     res.json({
       token,

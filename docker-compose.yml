@@ -1,0 +1,58 @@
+services:
+  api_gateway:
+    build:
+      context: ./api_gateway
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      USER_SERVICE_URL: http://user_service:3001
+      NOTES_SERVICE_URL: http://notes_service:3002
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+    depends_on:
+      - user_service
+      - notes_service
+    restart: unless-stopped
+
+  user_service:
+    build:
+      context: ./user_service
+    expose:
+      - "3001"
+    environment:
+      PORT: 3001
+      MONGODB_URI: mongodb://mongo_user:27017/users_db
+      MONGODB_DB_NAME: users_db
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      BCRYPT_SALT_ROUNDS: ${BCRYPT_SALT_ROUNDS:-10}
+    depends_on:
+      - mongo_user
+    restart: unless-stopped
+
+  notes_service:
+    build:
+      context: ./notes_service
+    expose:
+      - "3002"
+    environment:
+      PORT: 3002
+      MONGODB_URI: mongodb://mongo_notes:27017/notes_db
+    depends_on:
+      - mongo_notes
+    restart: unless-stopped
+
+  mongo_user:
+    image: mongo:7
+    volumes:
+      - mongo_user_data:/data/db
+    restart: unless-stopped
+
+  mongo_notes:
+    image: mongo:7
+    volumes:
+      - mongo_notes_data:/data/db
+    restart: unless-stopped
+
+volumes:
+  mongo_user_data:
+  mongo_notes_data:

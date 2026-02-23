@@ -1,74 +1,41 @@
 import express from 'express';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import mongoose from 'mongoose';
 import Note from '../models/Note.js';
 
 const router = express.Router();
-const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret-change-me';
 type UserRole = 'admin' | 'user';
 type Requester = { requesterId: string; requesterRole: UserRole };
-type JwtPayload = { sub?: unknown; role?: unknown };
+
 const buildNoteIdQuery = (id: string) => ({
   $or: [{ _id: id }, { _id: new mongoose.Types.ObjectId(id) }],
 });
 
-const verifyJwtPayload = (token: string, secret: string): JwtPayload | null => {
-  const parts = token.split('.');
-  if (parts.length !== 3) {
-    return null;
+const getSingleHeaderValue = (header: string | string[] | undefined): string => {
+  if (typeof header === 'string') {
+    return header;
   }
 
-  const [headerB64, payloadB64, signatureB64] = parts;
-
-  try {
-    const header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8')) as { alg?: string };
-    if (header.alg !== 'HS256') {
-      return null;
-    }
-
-    const signedData = `${headerB64}.${payloadB64}`;
-    const expectedSignature = createHmac('sha256', secret).update(signedData).digest('base64url');
-    const expectedBuffer = Buffer.from(expectedSignature);
-    const providedBuffer = Buffer.from(signatureB64);
-
-    if (expectedBuffer.length !== providedBuffer.length) {
-      return null;
-    }
-
-    if (!timingSafeEqual(expectedBuffer, providedBuffer)) {
-      return null;
-    }
-
-    return JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')) as JwtPayload;
-  } catch {
-    return null;
+  if (Array.isArray(header) && header.length > 0) {
+    return header[0] ?? '';
   }
+
+  return '';
 };
 
-const getRequester = (req: express.Request): Requester | null => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+const getRequesterFromGatewayHeaders = (req: express.Request): Requester | null => {
+  const requesterId = getSingleHeaderValue(req.headers['x-user-id']).trim();
+  const roleHeader = getSingleHeaderValue(req.headers['x-user-role']).trim().toLowerCase();
+
+  if (!requesterId || !mongoose.Types.ObjectId.isValid(requesterId)) {
     return null;
   }
 
-  const token = authHeader.slice('Bearer '.length);
-
-  const payload = verifyJwtPayload(token, jwtSecret);
-  if (!payload) {
-    return null;
-  }
-
-  const requesterId = typeof payload.sub === 'string' ? payload.sub : '';
-  if (!requesterId) {
-    return null;
-  }
-
-  const requesterRole: UserRole = payload.role === 'admin' ? 'admin' : 'user';
+  const requesterRole: UserRole = roleHeader === 'admin' ? 'admin' : 'user';
   return { requesterId, requesterRole };
 };
 
 router.get('/', async (req, res) => {
-  const requester = getRequester(req);
+  const requester = getRequesterFromGatewayHeaders(req);
   if (!requester) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
@@ -95,7 +62,7 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const requester = getRequester(req);
+  const requester = getRequesterFromGatewayHeaders(req);
   if (!requester) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
@@ -123,7 +90,7 @@ router.post('/', async (req, res) => {
 });
 
 router.patch('/:id', async (req, res) => {
-  const requester = getRequester(req);
+  const requester = getRequesterFromGatewayHeaders(req);
   if (!requester) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
@@ -171,7 +138,7 @@ router.patch('/:id', async (req, res) => {
 });
 
 router.delete('/:id', async (req, res) => {
-  const requester = getRequester(req);
+  const requester = getRequesterFromGatewayHeaders(req);
   if (!requester) {
     return res.status(401).json({ message: 'Unauthorized' });
   }

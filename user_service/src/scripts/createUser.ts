@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import { MongoClient } from 'mongodb';
+import bcrypt from 'bcrypt';
 
 dotenv.config();
 
@@ -28,6 +29,8 @@ const parseArgs = () => {
 };
 
 const client = new MongoClient(mongoUri);
+const parsedBcryptSaltRounds = Number.parseInt(process.env.BCRYPT_SALT_ROUNDS ?? '10', 10);
+const bcryptSaltRounds = Number.isFinite(parsedBcryptSaltRounds) ? parsedBcryptSaltRounds : 10;
 
 const run = async () => {
   const { name, email, password, role } = parseArgs();
@@ -52,10 +55,12 @@ const run = async () => {
       return;
     }
 
+    const hashedPassword = await bcrypt.hash(password, bcryptSaltRounds);
+
     const result = await users.insertOne({
       name,
       email,
-      password,
+      password: hashedPassword,
       role: normalizedRole,
       createdAt: new Date(),
     });

@@ -4,7 +4,8 @@
   "description": "Simple API gateway for user and notes services",
   "main": "src/index.ts",
   "scripts": {
-    "start": "node --loader ts-node/esm src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
     "dev": "node --loader ts-node/esm src/index.ts",
     "dev:nodemon": "nodemon --exec \"node --loader ts-node/esm\" src/index.ts"
   },
