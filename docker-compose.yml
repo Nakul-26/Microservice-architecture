@@ -9,9 +9,26 @@ services:
       USER_SERVICE_URL: http://user_service:3001
       NOTES_SERVICE_URL: http://notes_service:3002
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-5000}
+      RATE_LIMIT_USERS_WINDOW_MS: ${RATE_LIMIT_USERS_WINDOW_MS:-60000}
+      RATE_LIMIT_USERS_MAX_REQUESTS: ${RATE_LIMIT_USERS_MAX_REQUESTS:-120}
+      RATE_LIMIT_NOTES_WINDOW_MS: ${RATE_LIMIT_NOTES_WINDOW_MS:-60000}
+      RATE_LIMIT_NOTES_MAX_REQUESTS: ${RATE_LIMIT_NOTES_MAX_REQUESTS:-240}
+      RATE_LIMIT_LOGIN_WINDOW_MS: ${RATE_LIMIT_LOGIN_WINDOW_MS:-60000}
+      RATE_LIMIT_LOGIN_MAX_REQUESTS: ${RATE_LIMIT_LOGIN_MAX_REQUESTS:-10}
+      CIRCUIT_BREAKER_FAILURE_THRESHOLD: ${CIRCUIT_BREAKER_FAILURE_THRESHOLD:-5}
+      CIRCUIT_BREAKER_OPEN_MS: ${CIRCUIT_BREAKER_OPEN_MS:-30000}
     depends_on:
-      - user_service
-      - notes_service
+      user_service:
+        condition: service_healthy
+      notes_service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   user_service:
@@ -26,7 +43,14 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
       BCRYPT_SALT_ROUNDS: ${BCRYPT_SALT_ROUNDS:-10}
     depends_on:
-      - mongo_user
+      mongo_user:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   notes_service:
@@ -38,7 +62,14 @@ services:
       PORT: 3002
       MONGODB_URI: mongodb://mongo_notes:27017/notes_db
     depends_on:
-      - mongo_notes
+      mongo_notes:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3002/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   mongo_user:
