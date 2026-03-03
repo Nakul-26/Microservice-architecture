@@ -25,6 +25,10 @@ const notesRateLimitWindowMs = Number.parseInt(process.env.RATE_LIMIT_NOTES_WIND
 const notesRateLimitMaxRequests = Number.parseInt(process.env.RATE_LIMIT_NOTES_MAX_REQUESTS ?? '240', 10);
 const loginRateLimitWindowMs = Number.parseInt(process.env.RATE_LIMIT_LOGIN_WINDOW_MS ?? '60000', 10);
 const loginRateLimitMaxRequests = Number.parseInt(process.env.RATE_LIMIT_LOGIN_MAX_REQUESTS ?? '10', 10);
+const globalRateLimitWindowMs = Number.parseInt(process.env.RATE_LIMIT_GLOBAL_WINDOW_MS ?? '60000', 10);
+const globalRateLimitMaxRequests = Number.parseInt(process.env.RATE_LIMIT_GLOBAL_MAX_REQUESTS ?? '300', 10);
+const trustProxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS ?? '1', 10);
+const apiVersionPrefix = process.env.API_VERSION_PREFIX ?? '/api/v1';
 const circuitBreakerFailureThreshold = Number.parseInt(
   process.env.CIRCUIT_BREAKER_FAILURE_THRESHOLD ?? '5',
   10
@@ -32,6 +36,9 @@ const circuitBreakerFailureThreshold = Number.parseInt(
 const circuitBreakerOpenMs = Number.parseInt(process.env.CIRCUIT_BREAKER_OPEN_MS ?? '30000', 10);
 let server: Server | null = null;
 let isShuttingDown = false;
+
+app.disable('x-powered-by');
+app.set('trust proxy', Number.isNaN(trustProxyHops) ? 1 : trustProxyHops);
 
 type CircuitBreakerState = {
   targetService: 'user_service' | 'notes_service';
@@ -192,7 +199,7 @@ app.use((req, res, next) => {
 });
 
 const createRateLimiter = (
-  limiterName: 'users' | 'notes' | 'login',
+  limiterName: 'global' | 'users' | 'notes' | 'login',
   windowMs: number,
   max: number,
   skip?: (req: express.Request) => boolean
@@ -226,17 +233,45 @@ const createRateLimiter = (
     },
   });
 
+app.use(
+  createRateLimiter('global', globalRateLimitWindowMs, globalRateLimitMaxRequests, (req) =>
+    req.path === '/health' || req.path === `${apiVersionPrefix}/health`
+  )
+);
 app.use('/users/login', createRateLimiter('login', loginRateLimitWindowMs, loginRateLimitMaxRequests));
+app.use(
+  `${apiVersionPrefix}/users/login`,
+  createRateLimiter('login', loginRateLimitWindowMs, loginRateLimitMaxRequests)
+);
 app.use(
   '/users',
   createRateLimiter('users', usersRateLimitWindowMs, usersRateLimitMaxRequests, (req) => req.path === '/login')
 );
 app.use('/notes', createRateLimiter('notes', notesRateLimitWindowMs, notesRateLimitMaxRequests));
+app.use(
+  `${apiVersionPrefix}/users`,
+  createRateLimiter('users', usersRateLimitWindowMs, usersRateLimitMaxRequests, (req) => req.path === '/login')
+);
+app.use(
+  `${apiVersionPrefix}/notes`,
+  createRateLimiter('notes', notesRateLimitWindowMs, notesRateLimitMaxRequests)
+);
 
 const userServiceCircuitBreaker = createCircuitBreaker('user_service');
 const notesServiceCircuitBreaker = createCircuitBreaker('notes_service');
 
 app.use('/users', (req, res, next) => {
+  if (isCircuitOpen(userServiceCircuitBreaker)) {
+    sendCircuitOpenResponse(
+      req as express.Request & { requestId?: string },
+      res,
+      userServiceCircuitBreaker
+    );
+    return;
+  }
+  next();
+});
+app.use(`${apiVersionPrefix}/users`, (req, res, next) => {
   if (isCircuitOpen(userServiceCircuitBreaker)) {
     sendCircuitOpenResponse(
       req as express.Request & { requestId?: string },
@@ -259,6 +294,17 @@ app.use('/notes', (req, res, next) => {
   }
   next();
 });
+app.use(`${apiVersionPrefix}/notes`, (req, res, next) => {
+  if (isCircuitOpen(notesServiceCircuitBreaker)) {
+    sendCircuitOpenResponse(
+      req as express.Request & { requestId?: string },
+      res,
+      notesServiceCircuitBreaker
+    );
+    return;
+  }
+  next();
+});
 
 app.use((req, res, next) => {
   const startedAt = Date.now();
@@ -267,8 +313,8 @@ app.use((req, res, next) => {
   res.on('finish', () => {
     const durationMs = Date.now() - startedAt;
     const target =
-      req.path.startsWith('/users') ? userServiceUrl
-      : req.path.startsWith('/notes') ? notesServiceUrl
+      req.path.startsWith('/users') || req.path.startsWith(`${apiVersionPrefix}/users`) ? userServiceUrl
+      : req.path.startsWith('/notes') || req.path.startsWith(`${apiVersionPrefix}/notes`) ? notesServiceUrl
       : 'api_gateway';
 
     logger.info('HTTP Request', {
@@ -286,9 +332,11 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   const isUsersRoute = req.path.startsWith('/users');
   const isNotesRoute = req.path.startsWith('/notes');
-  const isPublicRoute = req.path === '/users/login';
+  const isVersionedUsersRoute = req.path.startsWith(`${apiVersionPrefix}/users`);
+  const isVersionedNotesRoute = req.path.startsWith(`${apiVersionPrefix}/notes`);
+  const isPublicRoute = req.path === '/users/login' || req.path === `${apiVersionPrefix}/users/login`;
 
-  if (!isUsersRoute && !isNotesRoute) {
+  if (!isUsersRoute && !isNotesRoute && !isVersionedUsersRoute && !isVersionedNotesRoute) {
     return next();
   }
 
@@ -331,10 +379,14 @@ app.get('/', (_req, res) => {
   res.json({
     service: 'api_gateway',
     status: 'ok',
+    version: 'v1',
     routes: {
       users: '/users',
       notes: '/notes',
       health: '/health',
+      versionedUsers: `${apiVersionPrefix}/users`,
+      versionedNotes: `${apiVersionPrefix}/notes`,
+      versionedHealth: `${apiVersionPrefix}/health`,
     },
   });
 });
@@ -342,6 +394,32 @@ app.get('/', (_req, res) => {
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    dependencies: {
+      userService: userServiceUrl,
+      notesService: notesServiceUrl,
+    },
+  });
+});
+
+app.get(apiVersionPrefix, (_req, res) => {
+  res.json({
+    service: 'api_gateway',
+    status: 'ok',
+    version: 'v1',
+    routes: {
+      users: `${apiVersionPrefix}/users`,
+      notes: `${apiVersionPrefix}/notes`,
+      health: `${apiVersionPrefix}/health`,
+    },
+  });
+});
+
+app.get(`${apiVersionPrefix}/health`, (_req, res) => {
+  res.json({
+    status: 'ok',
+    version: 'v1',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     dependencies: {
@@ -395,8 +473,96 @@ app.use('/users', createProxyMiddleware({
     },
   },
 }));
+app.use(`${apiVersionPrefix}/users`, createProxyMiddleware({
+  target: userServiceUrl,
+  changeOrigin: true,
+  pathRewrite: (path) => `/users${path}`,
+  timeout: upstreamTimeoutMs,
+  proxyTimeout: upstreamTimeoutMs,
+  on: {
+    proxyReq: (proxyReq, req) => {
+      const requestId = getSingleHeaderValue(req.headers['x-request-id']);
+      const authorization = getSingleHeaderValue(req.headers.authorization);
+      const userId = getSingleHeaderValue(req.headers['x-user-id']);
+      const userEmail = getSingleHeaderValue(req.headers['x-user-email']);
+      const userRole = getSingleHeaderValue(req.headers['x-user-role']);
+
+      if (requestId) {
+        proxyReq.setHeader('x-request-id', requestId);
+      }
+      if (authorization) {
+        proxyReq.setHeader('authorization', authorization);
+      }
+      if (userId) {
+        proxyReq.setHeader('x-user-id', userId);
+      }
+      if (userEmail) {
+        proxyReq.setHeader('x-user-email', userEmail);
+      }
+      if (userRole) {
+        proxyReq.setHeader('x-user-role', userRole);
+      }
+    },
+    error: (error, req, res) => {
+      markCircuitFailure(userServiceCircuitBreaker, error.message || 'proxy_error');
+      sendUpstreamErrorResponse(req, res, 'user_service', error);
+    },
+    proxyRes: (proxyRes) => {
+      if ((proxyRes.statusCode ?? 500) >= 500) {
+        markCircuitFailure(userServiceCircuitBreaker, `status_${proxyRes.statusCode ?? 500}`);
+        return;
+      }
+
+      markCircuitSuccess(userServiceCircuitBreaker);
+    },
+  },
+}));
 
 app.use('/notes', createProxyMiddleware({
+  target: notesServiceUrl,
+  changeOrigin: true,
+  pathRewrite: (path) => `/notes${path}`,
+  timeout: upstreamTimeoutMs,
+  proxyTimeout: upstreamTimeoutMs,
+  on: {
+    proxyReq: (proxyReq, req) => {
+      const requestId = getSingleHeaderValue(req.headers['x-request-id']);
+      const authorization = getSingleHeaderValue(req.headers.authorization);
+      const userId = getSingleHeaderValue(req.headers['x-user-id']);
+      const userEmail = getSingleHeaderValue(req.headers['x-user-email']);
+      const userRole = getSingleHeaderValue(req.headers['x-user-role']);
+
+      if (requestId) {
+        proxyReq.setHeader('x-request-id', requestId);
+      }
+      if (authorization) {
+        proxyReq.setHeader('authorization', authorization);
+      }
+      if (userId) {
+        proxyReq.setHeader('x-user-id', userId);
+      }
+      if (userEmail) {
+        proxyReq.setHeader('x-user-email', userEmail);
+      }
+      if (userRole) {
+        proxyReq.setHeader('x-user-role', userRole);
+      }
+    },
+    error: (error, req, res) => {
+      markCircuitFailure(notesServiceCircuitBreaker, error.message || 'proxy_error');
+      sendUpstreamErrorResponse(req, res, 'notes_service', error);
+    },
+    proxyRes: (proxyRes) => {
+      if ((proxyRes.statusCode ?? 500) >= 500) {
+        markCircuitFailure(notesServiceCircuitBreaker, `status_${proxyRes.statusCode ?? 500}`);
+        return;
+      }
+
+      markCircuitSuccess(notesServiceCircuitBreaker);
+    },
+  },
+}));
+app.use(`${apiVersionPrefix}/notes`, createProxyMiddleware({
   target: notesServiceUrl,
   changeOrigin: true,
   pathRewrite: (path) => `/notes${path}`,

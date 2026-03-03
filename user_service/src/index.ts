@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { MongoClient } from 'mongodb';
+import rateLimit from 'express-rate-limit';
 import userRoutes from './routes/userRoutes.js';
 import { logger } from './logger.js';
 import { errorHandler, notFoundHandler } from './errors.js';
@@ -13,6 +14,10 @@ const app = express();
 const port = process.env.PORT || 3001;
 const mongoUri = process.env.MONGODB_URI;
 const mongoDbName = process.env.MONGODB_DB_NAME || 'app';
+const apiVersionPrefix = process.env.API_VERSION_PREFIX ?? '/api/v1';
+const globalRateLimitWindowMs = Number.parseInt(process.env.RATE_LIMIT_GLOBAL_WINDOW_MS ?? '60000', 10);
+const globalRateLimitMaxRequests = Number.parseInt(process.env.RATE_LIMIT_GLOBAL_MAX_REQUESTS ?? '200', 10);
+const trustProxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS ?? '1', 10);
 let server: Server | null = null;
 let isShuttingDown = false;
 
@@ -22,6 +27,8 @@ if (!mongoUri) {
 
 app.use(express.json());
 app.use(cors());
+app.disable('x-powered-by');
+app.set('trust proxy', Number.isNaN(trustProxyHops) ? 1 : trustProxyHops);
 app.use((req, _res, next) => {
   const incomingHeader = req.headers['x-request-id'];
   const requestId =
@@ -36,6 +43,33 @@ app.use((req, _res, next) => {
 
   next();
 });
+app.use(rateLimit({
+  windowMs: globalRateLimitWindowMs,
+  max: globalRateLimitMaxRequests,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  skip: (req) => req.path === '/health',
+  handler: (req, res) => {
+    const requestId = (req as express.Request & { requestId?: string }).requestId ?? 'n/a';
+    logger.warn('Rate limit exceeded', {
+      requestId,
+      limiter: 'global',
+      method: req.method,
+      path: req.originalUrl,
+      ip: req.ip,
+      max: globalRateLimitMaxRequests,
+      windowMs: globalRateLimitWindowMs,
+    });
+
+    res.status(429).json({
+      error: {
+        code: 'RATE_LIMITED',
+        message: 'Too many requests, please try again later.',
+      },
+      requestId,
+    });
+  },
+}));
 app.use((req, res, next) => {
   const startedAt = Date.now();
   const requestId = (req as express.Request & { requestId?: string }).requestId ?? 'n/a';
@@ -54,6 +88,7 @@ app.use((req, res, next) => {
 });
 
 app.use('/users', userRoutes);
+app.use(`${apiVersionPrefix}/users`, userRoutes);
 
 app.get('/', (req, res) => {
   res.send('User Service Running');
@@ -83,6 +118,40 @@ app.get('/health', async (req, res) => {
   } catch {
     return res.status(503).json({
       status: 'degraded',
+      uptime: process.uptime(),
+      mongo: 'disconnected',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+app.get(`${apiVersionPrefix}/health`, async (req, res) => {
+  const db = req.app.locals.db as ReturnType<MongoClient['db']> | undefined;
+
+  if (!db) {
+    return res.status(503).json({
+      status: 'degraded',
+      version: 'v1',
+      uptime: process.uptime(),
+      mongo: 'disconnected',
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  try {
+    await db.command({ ping: 1 });
+
+    return res.json({
+      status: 'ok',
+      version: 'v1',
+      uptime: process.uptime(),
+      mongo: 'connected',
+      timestamp: new Date().toISOString(),
+    });
+  } catch {
+    return res.status(503).json({
+      status: 'degraded',
+      version: 'v1',
       uptime: process.uptime(),
       mongo: 'disconnected',
       timestamp: new Date().toISOString(),

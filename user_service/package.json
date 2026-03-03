@@ -7,10 +7,11 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "nodemon --exec \"node --loader ts-node/esm\" src/index.ts",
-    "users:list": "node --loader ts-node/esm src/scripts/listUsers.ts",
-    "users:create": "node --loader ts-node/esm src/scripts/createUser.ts",
-    "users:password": "node --loader ts-node/esm src/scripts/changePassword.ts"
+    "dev": "npm run build && node dist/index.js",
+    "dev:nodemon": "nodemon --watch src --ext ts --exec \"npm run build && node dist/index.js\"",
+    "users:list": "npm run build && node dist/scripts/listUsers.js",
+    "users:create": "npm run build && node dist/scripts/createUser.js",
+    "users:password": "npm run build && node dist/scripts/changePassword.js"
   },
   "keywords": [],
   "author": "",
@@ -22,6 +23,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^6.19.0"
   },

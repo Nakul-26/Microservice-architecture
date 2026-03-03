@@ -6,9 +6,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "node --loader ts-node/esm src/index.ts",
-    "dev:nodemon": "nodemon --exec \"node --loader ts-node/esm\" src/index.ts",
-    "test:smoke": "node --loader ts-node/esm src/scripts/integrationSmoke.ts"
+    "dev": "npm run build && node dist/index.js",
+    "dev:nodemon": "nodemon --watch src --ext ts --exec \"npm run build && node dist/index.js\"",
+    "test:smoke": "npm run build && node dist/scripts/integrationSmoke.js"
   },
   "keywords": [],
   "author": "",
