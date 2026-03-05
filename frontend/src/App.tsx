@@ -19,7 +19,7 @@ type Note = {
   updatedAt?: string
 }
 
-const API_GATEWAY_BASE = 'http://localhost:3000'
+const API_GATEWAY_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3000'
 const AUTH_TOKEN_KEY = 'auth_token'
 const AUTH_USER_KEY = 'auth_user'
 
