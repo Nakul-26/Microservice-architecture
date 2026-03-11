@@ -276,21 +276,6 @@ Optional variables:
 
 Run this from the repository root to simulate `user_service` failure and verify gateway circuit breaker behavior:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\circuit-breaker-demo.ps1
-```
-
-Optional parameters:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\circuit-breaker-demo.ps1 `
-  -GatewayBaseUrl "http://localhost:3000" `
-  -FailureThreshold 5 `
-  -OpenMs 30000 `
-  -LoginEmail "demo@example.com" `
-  -LoginPassword "demo-password"
-```
-
 Expected result:
 
 - while `user_service` is stopped, requests move from upstream errors to `503` responses containing `CIRCUIT_OPEN`
